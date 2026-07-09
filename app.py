@@ -1,0 +1,159 @@
+from flask import Flask, render_template, redirect, request
+from flask_login import LoginManager, login_user, login_required, logout_user, current_user
+from flask_socketio import SocketIO, emit
+from models import db, User, Message, MessageRead
+from werkzeug.security import generate_password_hash, check_password_hash
+
+app = Flask(__name__, template_folder="instance/templates")
+app.config["SECRET_KEY"] = "secret"
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
+
+db.init_app(app)
+
+# ★ Windowsでは eventlet/gevent が安定しないため threading を使う
+socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+
+@app.route("/")
+def index():
+    return redirect("/login")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect("/dashboard")
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+
+        if username == "" or password == "":
+            return render_template("login.html", error="入力してください")
+
+        user = User.query.filter_by(username=username).first()
+
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            return redirect("/dashboard")
+
+        return render_template("login.html", error="ユーザー名またはパスワードが違います")
+
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = generate_password_hash(request.form["password"])
+
+        user = User(username=username, password=password)
+        db.session.add(user)
+        db.session.commit()
+
+        return redirect("/login")
+
+    return render_template("register.html")
+
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    return render_template("dashboard.html")
+
+
+@app.route("/chat")
+@login_required
+def chat():
+    messages = Message.query.order_by(Message.timestamp).all()
+
+    # ★ 画面を開いた瞬間に既読をつける（自分以外）
+    for msg in messages:
+        if msg.user_id == current_user.id:
+            continue
+
+        already = MessageRead.query.filter_by(
+            message_id=msg.id,
+            user_id=current_user.id
+        ).first()
+
+        if not already:
+            read = MessageRead(message_id=msg.id, user_id=current_user.id)
+            db.session.add(read)
+            db.session.commit()
+
+            socketio.emit("read_message", {
+                "message_id": msg.id,
+                "username": current_user.username
+            }, to=None)
+
+    return render_template("chat.html", messages=messages)
+
+
+# ★ メッセージ送信（SocketIOイベント）
+@socketio.on("send_message")
+def handle_send_message(data):
+    content = data["content"]
+    user = current_user
+
+    msg = Message(user_id=user.id, content=content)
+    db.session.add(msg)
+    db.session.commit()
+
+    emit("new_message", {
+        "id": msg.id,
+        "username": user.username,
+        "content": content,
+        "time": msg.timestamp.strftime("%H:%M")
+    }, to=None)
+
+
+# ★ 新しいメッセージが画面に表示された瞬間に既読をつける
+@socketio.on("message_displayed")
+def handle_message_displayed(data):
+    msg_id = data["message_id"]
+    user = current_user
+
+    msg = Message.query.get(msg_id)
+
+    if msg.user_id == user.id:
+        return
+
+    already = MessageRead.query.filter_by(
+        message_id=msg_id,
+        user_id=user.id
+    ).first()
+
+    if not already:
+        read = MessageRead(message_id=msg_id, user_id=user.id)
+        db.session.add(read)
+        db.session.commit()
+
+        emit("read_message", {
+            "message_id": msg_id,
+            "username": user.username
+        }, to=None)
+
+
+@app.route("/logout")
+def logout():
+    logout_user()
+    return redirect("/login")
+
+
+if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()
+
+    # ★ Windowsでは threading が最も安定
+    socketio.run(app, debug=False, port=5000)
