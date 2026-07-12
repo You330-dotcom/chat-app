@@ -22,7 +22,7 @@
 <body>
 <header>
   <h1>Chatアプリ</h1>
-  <span>{{ username }} さん <a href="/logout">ログアウト</a></span>
+  <span>{{ username }} <a href="/logout">ログアウト</a></span>
 </header>
 
 <div class="container">
@@ -30,14 +30,15 @@
 
   <div class="cards">
 
-    <!-- チャット（枠つきに修正済み） -->
+    <!-- チャット -->
     <a class="card" href="/chat">
       <div class="icon">💬</div>
       <h3>チャット</h3>
+      <p>リアルタイムチャットへ</p>
     </a>
 
-    <!-- 学習ツール -->
-    <a class="card"  href="#">
+    <!-- DM（まだ未実装） -->
+    <a class="card" href="#">
       <div class="icon">📗</div>
       <h3>DM</h3>
       <p>（まだできてない）</p>

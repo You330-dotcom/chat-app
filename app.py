@@ -1,17 +1,17 @@
 from flask import Flask, render_template, redirect, request
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
-from flask_sock import Sock
+from flask_socketio import SocketIO, emit
 from models import db, User, Message, MessageRead
 from werkzeug.security import generate_password_hash, check_password_hash
-import json
 
 app = Flask(__name__, template_folder="instance/templates")
 app.config["SECRET_KEY"] = "secret"
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
 
 db.init_app(app)
-sock = Sock(app)
+
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -93,83 +93,58 @@ def chat():
     return render_template("chat.html", messages=messages)
 
 
-clients = set()
+# ---------------------------
+# SocketIO（リアルタイム）
+# ---------------------------
+
+@socketio.on("send_message")
+def handle_send_message(data):
+    content = data["content"]
+    username = data["username"]
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return
+
+    msg = Message(user_id=user.id, content=content)
+    db.session.add(msg)
+    db.session.commit()
+
+    emit("new_message", {
+        "id": msg.id,
+        "username": user.username,
+        "content": msg.content,
+        "time": msg.timestamp.strftime("%H:%M")
+    }, broadcast=True)
 
 
-@sock.route("/ws")
-def ws_route(ws):
-    clients.add(ws)
-    try:
-        while True:
-            data = ws.receive()
-            if data is None:
-                break
+@socketio.on("message_displayed")
+def handle_message_displayed(data):
+    msg_id = data["message_id"]
+    username = data["username"]
 
-            payload = json.loads(data)
-            action = payload.get("action")
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return
 
-            if action == "send_message":
-                content = payload["content"]
-                username = payload["username"]
+    msg = Message.query.get(msg_id)
+    if not msg or msg.user_id == user.id:
+        return
 
-                user = User.query.filter_by(username=username).first()
-                if not user:
-                    continue
+    already = MessageRead.query.filter_by(
+        message_id=msg_id,
+        user_id=user.id
+    ).first()
 
-                msg = Message(user_id=user.id, content=content)
-                db.session.add(msg)
-                db.session.commit()
+    if not already:
+        read = MessageRead(message_id=msg_id, user_id=user.id)
+        db.session.add(read)
+        db.session.commit()
 
-                message_data = {
-                    "type": "new_message",
-                    "id": msg.id,
-                    "username": user.username,
-                    "content": msg.content,
-                    "time": msg.timestamp.strftime("%H:%M"),
-                }
-
-                for c in list(clients):
-                    try:
-                        c.send(json.dumps(message_data))
-                    except:
-                        clients.discard(c)
-
-            elif action == "message_displayed":
-                msg_id = payload["message_id"]
-                username = payload["username"]
-
-                user = User.query.filter_by(username=username).first()
-                if not user:
-                    continue
-
-                msg = Message.query.get(msg_id)
-                if not msg or msg.user_id == user.id:
-                    continue
-
-                already = MessageRead.query.filter_by(
-                    message_id=msg_id,
-                    user_id=user.id
-                ).first()
-
-                if not already:
-                    read = MessageRead(message_id=msg_id, user_id=user.id)
-                    db.session.add(read)
-                    db.session.commit()
-
-                    read_data = {
-                        "type": "read_message",
-                        "message_id": msg_id,
-                        "username": user.username,
-                    }
-
-                    for c in list(clients):
-                        try:
-                            c.send(json.dumps(read_data))
-                        except:
-                            clients.discard(c)
-
-    finally:
-        clients.discard(ws)
+        emit("read_message", {
+            "message_id": msg_id,
+            "username": user.username
+        }, broadcast=True)
 
 
 @app.route("/logout")
@@ -181,5 +156,4 @@ def logout():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(host="https://chat-app-jhld.onrender.com", port=5000, debug=False, threaded=False)
-    
+    socketio.run(app, host="0.0.0.0", port=5000)

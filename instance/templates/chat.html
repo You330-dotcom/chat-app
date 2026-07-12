@@ -100,89 +100,67 @@
   <button id="send">送信</button>
 </div>
 
+<!-- Socket.IO -->
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
 <script>
-
-  /* ★★★ ここが医院さん専用修正ポイント ★★★
-     LANアクセスで確実に WebSocket が OPEN するように固定する
-  */
-  const ws = new WebSocket("ws://192.168.0.32:5000/ws");
-
-  ws.onopen = () => {
-      console.log("WS OPEN");
-  };
-
-  ws.onerror = (e) => {
-      console.log("WS ERROR", e);
-  };
+  const socket = io();
 
   const messagesBox = document.getElementById("messages");
   const input = document.getElementById("message");
   const sendBtn = document.getElementById("send");
 
   sendBtn.onclick = () => {
-      console.log("SEND CLICKED");
-
-      if (ws.readyState !== WebSocket.OPEN) {
-          console.log("WS NOT READY:", ws.readyState);
-          return;
-      }
-
       const text = input.value;
       if (text.trim() === "") return;
 
-      ws.send(JSON.stringify({
-          action: "send_message",
+      socket.emit("send_message", {
           content: text,
           username: CURRENT_USER
-      }));
+      });
 
       input.value = "";
   };
 
-  ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+  socket.on("new_message", (data) => {
+      const row = document.createElement("div");
+      row.className = (data.username === CURRENT_USER) ? "msg-row me" : "msg-row other";
 
-      if (data.type === "new_message") {
-          const row = document.createElement("div");
-          row.className = (data.username === CURRENT_USER) ? "msg-row me" : "msg-row other";
+      row.innerHTML = `
+          <div class="name">${data.username}</div>
+          <div class="bubble" data-id="${data.id}">${data.content}</div>
+          <div class="time">${data.time}</div>
+          <div class="read-toggle" onclick="toggleRead('${data.id}')">
+              既読を見る ▼
+          </div>
+          <div class="read-list" id="read-${data.id}" style="display:none;"></div>
+      `;
 
-          row.innerHTML = `
-              <div class="name">${data.username}</div>
-              <div class="bubble" data-id="${data.id}">${data.content}</div>
-              <div class="time">${data.time}</div>
-              <div class="read-toggle" onclick="toggleRead('${data.id}')">
-                  既読を見る ▼
-              </div>
-              <div class="read-list" id="read-${data.id}" style="display:none;"></div>
-          `;
+      messagesBox.appendChild(row);
+      messagesBox.scrollTop = messagesBox.scrollHeight;
 
-          messagesBox.appendChild(row);
-          messagesBox.scrollTop = messagesBox.scrollHeight;
+      if (data.username !== CURRENT_USER) {
+          socket.emit("message_displayed", {
+              message_id: data.id,
+              username: CURRENT_USER
+          });
+      }
+  });
 
-          if (data.username !== CURRENT_USER) {
-              ws.send(JSON.stringify({
-                  action: "message_displayed",
-                  message_id: data.id,
-                  username: CURRENT_USER
-              }));
-          }
+  socket.on("read_message", (data) => {
+      const list = document.getElementById("read-" + data.message_id);
+      if (!list) return;
+
+      const items = list.querySelectorAll(".read");
+      for (let r of items) {
+          if (r.textContent.includes(data.username)) return;
       }
 
-      if (data.type === "read_message") {
-          const list = document.getElementById("read-" + data.message_id);
-          if (!list) return;
-
-          const items = list.querySelectorAll(".read");
-          for (let r of items) {
-              if (r.textContent.includes(data.username)) return;
-          }
-
-          const read = document.createElement("div");
-          read.className = "read";
-          read.textContent = data.username;
-          list.appendChild(read);
-      }
-  };
+      const read = document.createElement("div");
+      read.className = "read";
+      read.textContent = data.username;
+      list.appendChild(read);
+  });
 
   function toggleRead(id) {
       const box = document.getElementById("read-" + id);
