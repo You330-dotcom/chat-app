@@ -76,7 +76,6 @@ def dashboard():
 def chat():
     messages = Message.query.order_by(Message.timestamp).all()
 
-    # 画面を開いた瞬間に既読をつける（自分以外）
     for msg in messages:
         if msg.user_id == current_user.id:
             continue
@@ -94,7 +93,6 @@ def chat():
     return render_template("chat.html", messages=messages)
 
 
-# 接続中の WebSocket クライアントを管理
 clients = set()
 
 
@@ -110,7 +108,6 @@ def ws_route(ws):
             payload = json.loads(data)
             action = payload.get("action")
 
-            # メッセージ送信
             if action == "send_message":
                 content = payload["content"]
                 username = payload["username"]
@@ -137,7 +134,6 @@ def ws_route(ws):
                     except:
                         clients.discard(c)
 
-            # 既読
             elif action == "message_displayed":
                 msg_id = payload["message_id"]
                 username = payload["username"]
@@ -185,4 +181,4 @@ def logout():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(debug=False, port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=False)
