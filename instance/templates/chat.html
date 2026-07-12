@@ -103,11 +103,21 @@
 <script>
   const ws = new WebSocket("ws://" + window.location.host + "/ws");
 
+  ws.onopen = () => {
+      console.log("WS OPEN");
+  };
+
+  ws.onerror = (e) => {
+      console.log("WS ERROR", e);
+  };
+
   const messagesBox = document.getElementById("messages");
   const input = document.getElementById("message");
   const sendBtn = document.getElementById("send");
 
   sendBtn.onclick = () => {
+      console.log("SEND CLICKED");
+
       const text = input.value;
       if (text.trim() === "") return;
 
