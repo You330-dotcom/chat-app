@@ -101,11 +101,11 @@
 </div>
 
 <script>
-  const ws = new WebSocket(
-      (location.protocol === "https:" ? "wss://" : "ws://") +
-      window.location.host +
-      "/ws"
-  );
+
+  /* ★★★ ここが医院さん専用修正ポイント ★★★
+     LANアクセスで確実に WebSocket が OPEN するように固定する
+  */
+  const ws = new WebSocket("ws://192.168.0.32:5000/ws");
 
   ws.onopen = () => {
       console.log("WS OPEN");
@@ -121,6 +121,11 @@
 
   sendBtn.onclick = () => {
       console.log("SEND CLICKED");
+
+      if (ws.readyState !== WebSocket.OPEN) {
+          console.log("WS NOT READY:", ws.readyState);
+          return;
+      }
 
       const text = input.value;
       if (text.trim() === "") return;
