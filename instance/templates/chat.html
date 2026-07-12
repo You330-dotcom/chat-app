@@ -100,70 +100,75 @@
   <button id="send">送信</button>
 </div>
 
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
 <script>
-  // ★★★ Windows + Flask-SocketIO + threading では WebSocket を強制しないと既読が動かない ★★★
-  const socket = io({
-      transports: ["websocket"],
-      upgrade: false
-  });
+  const ws = new WebSocket("ws://" + window.location.host + "/ws");
 
-  document.getElementById("send").onclick = () => {
-      const text = document.getElementById("message").value;
+  const messagesBox = document.getElementById("messages");
+  const input = document.getElementById("message");
+  const sendBtn = document.getElementById("send");
+
+  sendBtn.onclick = () => {
+      const text = input.value;
       if (text.trim() === "") return;
-      socket.emit("send_message", { content: text });
-      document.getElementById("message").value = "";
+
+      ws.send(JSON.stringify({
+          action: "send_message",
+          content: text,
+          username: CURRENT_USER
+      }));
+
+      input.value = "";
   };
 
-  // ★ 新しいメッセージ受信
-  socket.on("new_message", data => {
-    const box = document.getElementById("messages");
+  ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
 
-    const row = document.createElement("div");
-    row.className = (data.username === CURRENT_USER) ? "msg-row me" : "msg-row other";
+      if (data.type === "new_message") {
+          const row = document.createElement("div");
+          row.className = (data.username === CURRENT_USER) ? "msg-row me" : "msg-row other";
 
-    row.innerHTML = `
-        <div class="name">${data.username}</div>
-        <div class="bubble" data-id="${data.id}">${data.content}</div>
-        <div class="time">${data.time}</div>
+          row.innerHTML = `
+              <div class="name">${data.username}</div>
+              <div class="bubble" data-id="${data.id}">${data.content}</div>
+              <div class="time">${data.time}</div>
+              <div class="read-toggle" onclick="toggleRead('${data.id}')">
+                  既読を見る ▼
+              </div>
+              <div class="read-list" id="read-${data.id}" style="display:none;"></div>
+          `;
 
-        <div class="read-toggle" onclick="toggleRead('${data.id}')">
-            既読を見る ▼
-        </div>
+          messagesBox.appendChild(row);
+          messagesBox.scrollTop = messagesBox.scrollHeight;
 
-        <div class="read-list" id="read-${data.id}" style="display:none;"></div>
-    `;
+          if (data.username !== CURRENT_USER) {
+              ws.send(JSON.stringify({
+                  action: "message_displayed",
+                  message_id: data.id,
+                  username: CURRENT_USER
+              }));
+          }
+      }
 
-    box.appendChild(row);
-    box.scrollTop = box.scrollHeight;
+      if (data.type === "read_message") {
+          const list = document.getElementById("read-" + data.message_id);
+          if (!list) return;
 
-    // ★★★ これがリアルタイム既読の命綱 ★★★
-    if (data.username !== CURRENT_USER) {
-        socket.emit("message_displayed", { message_id: data.id });
-    }
-  });
+          const items = list.querySelectorAll(".read");
+          for (let r of items) {
+              if (r.textContent.includes(data.username)) return;
+          }
+
+          const read = document.createElement("div");
+          read.className = "read";
+          read.textContent = data.username;
+          list.appendChild(read);
+      }
+  };
 
   function toggleRead(id) {
       const box = document.getElementById("read-" + id);
       box.style.display = (box.style.display === "none") ? "block" : "none";
   }
-
-  // ★ リアルタイム既読追加
-  socket.on("read_message", data => {
-      const list = document.getElementById("read-" + data.message_id);
-      if (!list) return;
-
-      const items = list.querySelectorAll(".read");
-      for (let r of items) {
-          if (r.textContent.includes(data.username)) return;
-      }
-
-      const read = document.createElement("div");
-      read.className = "read";
-      read.textContent = data.username;
-      list.appendChild(read);
-  });
 </script>
 
 </body>

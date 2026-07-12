@@ -1,17 +1,17 @@
 from flask import Flask, render_template, redirect, request
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
-from flask_socketio import SocketIO, emit
+from flask_sqlalchemy import SQLAlchemy
+from flask_sock import Sock
 from models import db, User, Message, MessageRead
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
 
 app = Flask(__name__, template_folder="instance/templates")
 app.config["SECRET_KEY"] = "secret"
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
 
 db.init_app(app)
-
-# ★ Windowsでは eventlet/gevent が安定しないため threading を使う
-socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+sock = Sock(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -37,11 +37,10 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
 
-        if username == "" or password == "":
+        if not username or not password:
             return render_template("login.html", error="入力してください")
 
         user = User.query.filter_by(username=username).first()
-
         if user and check_password_hash(user.password, password):
             login_user(user)
             return redirect("/dashboard")
@@ -77,7 +76,7 @@ def dashboard():
 def chat():
     messages = Message.query.order_by(Message.timestamp).all()
 
-    # ★ 画面を開いた瞬間に既読をつける（自分以外）
+    # 画面を開いた瞬間に既読をつける（自分以外）
     for msg in messages:
         if msg.user_id == current_user.id:
             continue
@@ -92,57 +91,89 @@ def chat():
             db.session.add(read)
             db.session.commit()
 
-            socketio.emit("read_message", {
-                "message_id": msg.id,
-                "username": current_user.username
-            }, to=None)
-
     return render_template("chat.html", messages=messages)
 
 
-# ★ メッセージ送信（SocketIOイベント）
-@socketio.on("send_message")
-def handle_send_message(data):
-    content = data["content"]
-    user = current_user
-
-    msg = Message(user_id=user.id, content=content)
-    db.session.add(msg)
-    db.session.commit()
-
-    emit("new_message", {
-        "id": msg.id,
-        "username": user.username,
-        "content": content,
-        "time": msg.timestamp.strftime("%H:%M")
-    }, to=None)
+# 接続中の WebSocket クライアントを管理
+clients = set()
 
 
-# ★ 新しいメッセージが画面に表示された瞬間に既読をつける
-@socketio.on("message_displayed")
-def handle_message_displayed(data):
-    msg_id = data["message_id"]
-    user = current_user
+@sock.route("/ws")
+def ws_route(ws):
+    clients.add(ws)
+    try:
+        while True:
+            data = ws.receive()
+            if data is None:
+                break
 
-    msg = Message.query.get(msg_id)
+            payload = json.loads(data)
+            action = payload.get("action")
 
-    if msg.user_id == user.id:
-        return
+            # メッセージ送信
+            if action == "send_message":
+                content = payload["content"]
+                username = payload["username"]
 
-    already = MessageRead.query.filter_by(
-        message_id=msg_id,
-        user_id=user.id
-    ).first()
+                user = User.query.filter_by(username=username).first()
+                if not user:
+                    continue
 
-    if not already:
-        read = MessageRead(message_id=msg_id, user_id=user.id)
-        db.session.add(read)
-        db.session.commit()
+                msg = Message(user_id=user.id, content=content)
+                db.session.add(msg)
+                db.session.commit()
 
-        emit("read_message", {
-            "message_id": msg_id,
-            "username": user.username
-        }, to=None)
+                message_data = {
+                    "type": "new_message",
+                    "id": msg.id,
+                    "username": user.username,
+                    "content": msg.content,
+                    "time": msg.timestamp.strftime("%H:%M"),
+                }
+
+                for c in list(clients):
+                    try:
+                        c.send(json.dumps(message_data))
+                    except:
+                        clients.discard(c)
+
+            # 既読
+            elif action == "message_displayed":
+                msg_id = payload["message_id"]
+                username = payload["username"]
+
+                user = User.query.filter_by(username=username).first()
+                if not user:
+                    continue
+
+                msg = Message.query.get(msg_id)
+                if not msg or msg.user_id == user.id:
+                    continue
+
+                already = MessageRead.query.filter_by(
+                    message_id=msg_id,
+                    user_id=user.id
+                ).first()
+
+                if not already:
+                    read = MessageRead(message_id=msg_id, user_id=user.id)
+                    db.session.add(read)
+                    db.session.commit()
+
+                    read_data = {
+                        "type": "read_message",
+                        "message_id": msg_id,
+                        "username": user.username,
+                    }
+
+                    for c in list(clients):
+                        try:
+                            c.send(json.dumps(read_data))
+                        except:
+                            clients.discard(c)
+
+    finally:
+        clients.discard(ws)
 
 
 @app.route("/logout")
@@ -154,6 +185,4 @@ def logout():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-
-    # ★ Windowsでは threading が最も安定
-    socketio.run(app, debug=False, port=5000)
+    app.run(debug=False, port=5000)
