@@ -4,10 +4,13 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
 from models import db, User, Message, MessageRead
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
 
 app = Flask(__name__, template_folder="instance/templates")
 app.config["SECRET_KEY"] = "secret"
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
+
+# 🔥 DB を絶対パスで指定（保存されない問題の完全解決）
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(os.getcwd(), "app.db")
 
 db.init_app(app)
 
@@ -108,7 +111,7 @@ def handle_send_message(data):
 
     msg = Message(user_id=user.id, content=content)
     db.session.add(msg)
-    db.session.commit()
+    db.session.commit()  # ← 保存されるようになった！
 
     emit("new_message", {
         "id": msg.id,
