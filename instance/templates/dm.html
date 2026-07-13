@@ -72,7 +72,10 @@
 
 <div class="messages" id="messages">
   {% for msg in messages %}
-    {% set readers = msg.reads | map(attribute='user.username') | list | unique %}
+
+    {# ⭐ generator → list → unique に変換（500対策） #}
+    {% set readers = msg.reads | map(attribute='user.username') | list %}
+    {% set readers = readers | unique %}
     {% set count = readers | length %}
 
     <div class="msg-row {% if msg.user_id == current_user.id %}me{% else %}other{% endif %}">
@@ -92,6 +95,7 @@
         </div>
       {% endif %}
     </div>
+
   {% endfor %}
 </div>
 
