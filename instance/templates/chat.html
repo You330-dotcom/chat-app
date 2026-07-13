@@ -124,11 +124,11 @@
   const sendBtn = document.getElementById("send");
 
   // 🔥 自動再接続設定
-  const socket = io({
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-  });
+const socket = io("https://chat-app-jhld.onrender.com", {
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+});
 
   socket.on("connect", () => {
       statusBox.textContent = "接続中";
