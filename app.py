@@ -11,7 +11,8 @@ app.config["SECRET_KEY"] = "secret"
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(os.getcwd(), "app.db")
 db.init_app(app)
 
-socketio = SocketIO(app, cors_allowed_origins="*")
+# ⭐ Windowsで必須（eventlet/geventを使わない）
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -132,7 +133,7 @@ def dm(user_id):
 
     messages = DMMessage.query.filter_by(room_id=room.id).order_by(DMMessage.timestamp).all()
 
-    # 🔥 DM既読をつける
+    # ⭐ DM既読をつける
     for msg in messages:
         if msg.user_id == current_user.id:
             continue
@@ -222,7 +223,8 @@ def dm_send(data):
     emit("dm_new", {
         "id": msg.id,
         "username": username,
-        "content": content
+        "content": content,
+        "time": msg.timestamp.strftime("%H:%M")
     }, to=room_id)
 
 
@@ -264,4 +266,5 @@ def ping_check(data):
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    socketio.run(app, host="0.0.0.0", port=5000)
+
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
