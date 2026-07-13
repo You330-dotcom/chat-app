@@ -1,13 +1,15 @@
-<h1>DM一覧</h1>
+<h1 style="font-size: 2rem; margin-bottom: 1.5rem;">DM一覧</h1>
 
-<ul>
+<ul style="font-size: 1.5rem; line-height: 2.5rem;">
   {% for user in users %}
     {% if user.id != current_user.id %}
       <li>
-        <a href="/dm/{{ user.id }}">{{ user.username }} とDMする</a>
+        <a href="/dm/{{ user.id }}" style="font-size: 1.5rem;">
+          {{ user.username }} とDMする
+        </a>
       </li>
     {% endif %}
   {% endfor %}
 </ul>
 
-<a href="/dashboard">戻る</a>
+<a href="/dashboard" style="font-size: 1.5rem;">戻る</a>
