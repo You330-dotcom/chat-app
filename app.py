@@ -1,17 +1,14 @@
 from flask import Flask, render_template, redirect, request
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
-from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit
-from models import db, User, Message, MessageRead
+from flask_socketio import SocketIO, emit, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
+from models import db, User, Message, MessageRead, DMRoom, DMMessage, DMRead
 import os
 
 app = Flask(__name__, template_folder="instance/templates")
 app.config["SECRET_KEY"] = "secret"
 
-# 🔥 DB を絶対パスで指定（保存されない問題の完全解決）
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(os.getcwd(), "app.db")
-
 db.init_app(app)
 
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -26,6 +23,9 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 
+# -------------------------
+# 基本ルート
+# -------------------------
 @app.route("/")
 def index():
     return redirect("/login")
@@ -39,9 +39,6 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
-
-        if not username or not password:
-            return render_template("login.html", error="入力してください")
 
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
@@ -74,6 +71,15 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+@app.route("/logout")
+def logout():
+    logout_user()
+    return redirect("/login")
+
+
+# -------------------------
+# 通常チャット
+# -------------------------
 @app.route("/chat")
 @login_required
 def chat():
@@ -96,22 +102,67 @@ def chat():
     return render_template("chat.html", messages=messages)
 
 
-# ---------------------------
-# SocketIO（リアルタイム）
-# ---------------------------
+# -------------------------
+# DM一覧
+# -------------------------
+@app.route("/dm_list")
+@login_required
+def dm_list():
+    users = User.query.all()
+    return render_template("dm_list.html", users=users)
 
+
+# -------------------------
+# DMルーム
+# -------------------------
+@app.route("/dm/<int:user_id>")
+@login_required
+def dm(user_id):
+    partner = User.query.get(user_id)
+
+    room = DMRoom.query.filter(
+        ((DMRoom.user1_id == current_user.id) & (DMRoom.user2_id == user_id)) |
+        ((DMRoom.user1_id == user_id) & (DMRoom.user2_id == current_user.id))
+    ).first()
+
+    if not room:
+        room = DMRoom(user1_id=current_user.id, user2_id=user_id)
+        db.session.add(room)
+        db.session.commit()
+
+    messages = DMMessage.query.filter_by(room_id=room.id).order_by(DMMessage.timestamp).all()
+
+    # 🔥 DM既読をつける
+    for msg in messages:
+        if msg.user_id == current_user.id:
+            continue
+
+        already = DMRead.query.filter_by(
+            message_id=msg.id,
+            user_id=current_user.id
+        ).first()
+
+        if not already:
+            read = DMRead(message_id=msg.id, user_id=current_user.id)
+            db.session.add(read)
+            db.session.commit()
+
+    return render_template("dm.html", partner=partner, room=room, messages=messages)
+
+
+# -------------------------
+# SocketIO（通常チャット）
+# -------------------------
 @socketio.on("send_message")
 def handle_send_message(data):
     content = data["content"]
     username = data["username"]
 
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return
 
     msg = Message(user_id=user.id, content=content)
     db.session.add(msg)
-    db.session.commit()  # ← 保存されるようになった！
+    db.session.commit()
 
     emit("new_message", {
         "id": msg.id,
@@ -127,11 +178,9 @@ def handle_message_displayed(data):
     username = data["username"]
 
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return
 
     msg = Message.query.get(msg_id)
-    if not msg or msg.user_id == user.id:
+    if msg.user_id == user.id:
         return
 
     already = MessageRead.query.filter_by(
@@ -150,12 +199,68 @@ def handle_message_displayed(data):
         }, broadcast=True)
 
 
-@app.route("/logout")
-def logout():
-    logout_user()
-    return redirect("/login")
+# -------------------------
+# SocketIO（DM）
+# -------------------------
+@socketio.on("join_dm")
+def join_dm(data):
+    join_room(data["room_id"])
 
 
+@socketio.on("dm_send")
+def dm_send(data):
+    room_id = data["room_id"]
+    username = data["username"]
+    content = data["content"]
+
+    user = User.query.filter_by(username=username).first()
+
+    msg = DMMessage(room_id=room_id, user_id=user.id, content=content)
+    db.session.add(msg)
+    db.session.commit()
+
+    emit("dm_new", {
+        "id": msg.id,
+        "username": username,
+        "content": content
+    }, to=room_id)
+
+
+@socketio.on("dm_read")
+def dm_read(data):
+    msg_id = data["message_id"]
+    username = data["username"]
+    room_id = data["room_id"]
+
+    user = User.query.filter_by(username=username).first()
+
+    already = DMRead.query.filter_by(
+        message_id=msg_id,
+        user_id=user.id
+    ).first()
+
+    if not already:
+        read = DMRead(message_id=msg_id, user_id=user.id)
+        db.session.add(read)
+        db.session.commit()
+
+        emit("dm_read_update", {
+            "message_id": msg_id,
+            "username": username
+        }, to=room_id)
+
+
+# -------------------------
+# 接続維持
+# -------------------------
+@socketio.on("ping_check")
+def ping_check(data):
+    pass
+
+
+# -------------------------
+# 起動
+# -------------------------
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()

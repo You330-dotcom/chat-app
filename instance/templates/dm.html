@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>DM</title>
+
+<style>
+  body { font-family: sans-serif; background: #f0f4f8; margin: 0; padding: 0; }
+  header { background: #4a90e2; color: white; padding: 1rem; display: flex; justify-content: space-between; }
+  header a { color:white; text-decoration:none; }
+
+  #messages {
+      padding: 1rem;
+      min-height: 70vh;
+      background: #fff;
+      overflow-y: auto;
+  }
+
+  .msg {
+      margin-bottom: 1rem;
+      padding: 0.5rem 1rem;
+      background: #e8f0fe;
+      border-radius: 8px;
+  }
+
+  .me {
+      background: #4a90e2;
+      color: white;
+      text-align: right;
+  }
+
+  .read-toggle {
+      font-size: 0.8rem;
+      color: #4a90e2;
+      cursor: pointer;
+      margin-top: 4px;
+  }
+
+  .read-list {
+      margin-top: 4px;
+      padding-left: 8px;
+  }
+
+  #input-area {
+      padding: 1rem;
+      background: #fff;
+      display: flex;
+      gap: 0.5rem;
+      border-top: 1px solid #ddd;
+  }
+
+  #text {
+      flex: 1;
+      padding: 0.8rem;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+  }
+
+  #send {
+      padding: 0.8rem 1.2rem;
+      background: #4a90e2;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+  }
+</style>
+</head>
+
+<body>
+
+<header>
+  <h2>{{ partner.username }} とのDM</h2>
+  <a href="/dm_list">戻る</a>
+</header>
+
+<div id="messages">
+  {% for msg in messages %}
+    {% set readers = msg.reads | map(attribute='user.username') | list | unique %}
+    {% set count = readers | length %}
+
+    <div class="msg {% if msg.user_id == current_user.id %}me{% endif %}">
+      <strong>{{ msg.user.username }}:</strong> {{ msg.content }}
+
+      {% if count > 0 %}
+        <div class="read-toggle" onclick="toggleRead('{{ msg.id }}')">
+          既読{{ count }} ▼
+        </div>
+
+        <div class="read-list" id="read-{{ msg.id }}" style="display:none;">
+          {% for name in readers %}
+            <div class="read">{{ name }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>
+
+<div id="input-area">
+  <input id="text" placeholder="メッセージを入力…">
+  <button id="send" onclick="send()">送信</button>
+</div>
+
+<script>
+    const ROOM_ID = "{{ room.id }}";
+    const CURRENT_USER = "{{ current_user.username }}";
+</script>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<script>
+  const socket = io();
+
+  socket.emit("join_dm", { room_id: ROOM_ID });
+
+  function send() {
+    const text = document.getElementById("text").value;
+    if (text.trim() === "") return;
+
+    socket.emit("dm_send", {
+      room_id: ROOM_ID,
+      content: text,
+      username: CURRENT_USER
+    });
+
+    document.getElementById("text").value = "";
+  }
+
+  socket.on("dm_new", (data) => {
+    const box = document.getElementById("messages");
+
+    const div = document.createElement("div");
+    div.className = "msg" + (data.username === CURRENT_USER ? " me" : "");
+    div.innerHTML = `<strong>${data.username}:</strong> ${data.content}`;
+
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+
+    if (data.username !== CURRENT_USER) {
+        socket.emit("dm_read", {
+            message_id: data.id,
+            username: CURRENT_USER,
+            room_id: ROOM_ID
+        });
+    }
+  });
+
+  socket.on("dm_read_update", (data) => {
+    const list = document.getElementById("read-" + data.message_id);
+    if (!list) return;
+
+    const items = list.querySelectorAll(".read");
+    for (let r of items) {
+        if (r.textContent.includes(data.username)) return;
+    }
+
+    const read = document.createElement("div");
+    read.className = "read";
+    read.textContent = data.username;
+    list.appendChild(read);
+
+    const count = list.querySelectorAll(".read").length;
+    const toggle = list.previousElementSibling;
+    toggle.textContent = `既読${count} ▼`;
+  });
+
+  function toggleRead(id) {
+      const box = document.getElementById("read-" + id);
+      box.style.display = (box.style.display === "none") ? "block" : "none";
+  }
+</script>
+
+</body>
+</html>

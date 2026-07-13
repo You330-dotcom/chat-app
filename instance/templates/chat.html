@@ -61,6 +61,12 @@
       margin-top: 4px;
       padding-left: 8px;
   }
+
+  .status {
+      font-size: 0.8rem;
+      color: #4a90e2;
+      padding: 0.2rem 1rem;
+  }
 </style>
 </head>
 
@@ -71,27 +77,36 @@
   <a href="/dashboard">戻る</a>
 </header>
 
+<div class="status" id="status">接続中...</div>
+
 <script>
   const CURRENT_USER = "{{ current_user.username }}";
 </script>
 
 <div class="messages" id="messages">
   {% for msg in messages %}
+
+    {% set readers = msg.reads | map(attribute='user.username') | list | unique %}
+    {% set count = readers | length %}
+
     <div class="msg-row {% if msg.user_id == current_user.id %}me{% else %}other{% endif %}">
       <div class="name">{{ msg.user.username }}</div>
       <div class="bubble" data-id="{{ msg.id }}">{{ msg.content }}</div>
       <div class="time">{{ msg.timestamp.strftime("%H:%M") }}</div>
 
-      <div class="read-toggle" onclick="toggleRead('{{ msg.id }}')">
-        既読を見る ▼
-      </div>
+      {% if count > 0 %}
+        <div class="read-toggle" id="toggle-{{ msg.id }}" onclick="toggleRead('{{ msg.id }}')">
+          既読{{ count }} ▼
+        </div>
 
-      <div class="read-list" id="read-{{ msg.id }}" style="display:none;">
-        {% for name in msg.reads | map(attribute='user.username') | list | unique %}
-          <div class="read">{{ name }}</div>
-        {% endfor %}
-      </div>
+        <div class="read-list" id="read-{{ msg.id }}" style="display:none;">
+          {% for name in readers %}
+            <div class="read">{{ name }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
+
   {% endfor %}
 </div>
 
@@ -100,15 +115,41 @@
   <button id="send">送信</button>
 </div>
 
-<!-- Socket.IO -->
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
 <script>
-  const socket = io();
-
+  const statusBox = document.getElementById("status");
   const messagesBox = document.getElementById("messages");
   const input = document.getElementById("message");
   const sendBtn = document.getElementById("send");
+
+  // 🔥 自動再接続設定
+  const socket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+  });
+
+  socket.on("connect", () => {
+      statusBox.textContent = "接続中";
+  });
+
+  socket.on("disconnect", () => {
+      statusBox.textContent = "切断されました。再接続中...";
+  });
+
+  socket.on("reconnect_attempt", () => {
+      statusBox.textContent = "再接続中...";
+  });
+
+  socket.on("reconnect", () => {
+      statusBox.textContent = "再接続しました";
+  });
+
+  // 🔥 心拍（ping）
+  setInterval(() => {
+      socket.emit("ping_check", { user: CURRENT_USER });
+  }, 10000);
 
   sendBtn.onclick = () => {
       const text = input.value;
@@ -130,9 +171,11 @@
           <div class="name">${data.username}</div>
           <div class="bubble" data-id="${data.id}">${data.content}</div>
           <div class="time">${data.time}</div>
-          <div class="read-toggle" onclick="toggleRead('${data.id}')">
-              既読を見る ▼
+
+          <div class="read-toggle" id="toggle-${data.id}" onclick="toggleRead('${data.id}')">
+              既読0 ▼
           </div>
+
           <div class="read-list" id="read-${data.id}" style="display:none;"></div>
       `;
 
@@ -147,6 +190,7 @@
       }
   });
 
+  // 🔥 既読人数をリアルタイム更新
   socket.on("read_message", (data) => {
       const list = document.getElementById("read-" + data.message_id);
       if (!list) return;
@@ -160,6 +204,10 @@
       read.className = "read";
       read.textContent = data.username;
       list.appendChild(read);
+
+      const count = list.querySelectorAll(".read").length;
+      const toggle = document.getElementById("toggle-" + data.message_id);
+      toggle.textContent = `既読${count} ▼`;
   });
 
   function toggleRead(id) {

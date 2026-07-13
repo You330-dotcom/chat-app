@@ -1,0 +1,13 @@
+<h1>DM一覧</h1>
+
+<ul>
+  {% for user in users %}
+    {% if user.id != current_user.id %}
+      <li>
+        <a href="/dm/{{ user.id }}">{{ user.username }} とDMする</a>
+      </li>
+    {% endif %}
+  {% endfor %}
+</ul>
+
+<a href="/dashboard">戻る</a>
